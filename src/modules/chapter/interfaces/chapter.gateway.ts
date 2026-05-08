@@ -89,6 +89,10 @@ export class ChapterGateway implements OnGatewayConnection, OnGatewayDisconnect 
       return;
     }
 
+    this.logger.log(
+      `chapter:generate received · user=${user.username} novel=${body.novelId} chapter=${body.chapterId}`,
+    );
+
     const ctrl = new AbortController();
     this.aborts.set(socket.id, ctrl);
 
@@ -119,10 +123,22 @@ export class ChapterGateway implements OnGatewayConnection, OnGatewayDisconnect 
         }
       }
 
-      socket.emit('chapter:done', { content: total });
+      // 用户已经按了中断:不要再覆盖发 done(已经发过 cancelled),
+      // 也不让前端误以为这是一次完整生成。
+      if (ctrl.signal.aborted) {
+        socket.emit('chapter:cancelled');
+      } else {
+        socket.emit('chapter:done', { content: total });
+      }
     } catch (e) {
-      this.logger.error(`generate failed: ${(e as Error).message}`, (e as Error).stack);
-      socket.emit('chapter:error', { message: (e as Error).message });
+      // 区分一下 abort 与真错:abort 不算错。
+      if (ctrl.signal.aborted) {
+        this.logger.log('generate aborted by user');
+        socket.emit('chapter:cancelled');
+      } else {
+        this.logger.error(`generate failed: ${(e as Error).message}`, (e as Error).stack);
+        socket.emit('chapter:error', { message: (e as Error).message });
+      }
     } finally {
       this.aborts.delete(socket.id);
     }

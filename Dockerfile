@@ -19,6 +19,7 @@ COPY package.json ./
 RUN npm install --omit=dev --no-audit --no-fund
 
 COPY --from=builder /app/dist ./dist
+COPY demo ./demo
 
 EXPOSE 3000
 CMD ["node", "dist/main.js"]

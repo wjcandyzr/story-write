@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>AI Novel Platform · Demo</title>
+  <script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.7.5/dist/socket.io.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+      max-width: 980px;
+      margin: 24px auto;
+      padding: 0 16px;
+      color: #1f2933;
+      background: #f7f8fa;
+    }
+    h1 { margin: 0 0 8px; font-size: 22px; }
+    .sub { color: #65707b; margin-bottom: 20px; font-size: 13px; }
+    .card {
+      background: #fff;
+      border: 1px solid #e3e7ec;
+      border-radius: 10px;
+      padding: 16px 20px;
+      margin-bottom: 16px;
+    }
+    .card h2 { margin: 0 0 12px; font-size: 15px; color: #2563eb; }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+    label { font-size: 13px; color: #4b5563; min-width: 92px; }
+    input, button, textarea, select {
+      font-family: inherit; font-size: 13px; padding: 6px 10px;
+      border: 1px solid #d1d5db; border-radius: 6px; outline: none;
+    }
+    input, select { flex: 1; min-width: 200px; }
+    textarea { width: 100%; resize: vertical; }
+    button {
+      background: #2563eb; color: #fff; border: none; cursor: pointer;
+      padding: 7px 14px; font-weight: 500;
+    }
+    button:hover { background: #1d4ed8; }
+    button:disabled { background: #9ca3af; cursor: not-allowed; }
+    button.ghost { background: #f3f4f6; color: #1f2937; }
+    button.ghost:hover { background: #e5e7eb; }
+    button.danger { background: #dc2626; }
+    .pill {
+      display: inline-block; padding: 2px 9px; font-size: 11px;
+      border-radius: 99px; background: #e5e7eb; color: #374151; margin-right: 6px;
+    }
+    .pill.active { background: #fef3c7; color: #92400e; }
+    .pill.done { background: #dcfce7; color: #166534; }
+    #log {
+      font-family: ui-monospace, "SF Mono", Consolas, monospace;
+      font-size: 12px; max-height: 200px; overflow-y: auto;
+      background: #0f172a; color: #cbd5e1; padding: 10px; border-radius: 6px;
+      white-space: pre-wrap; line-height: 1.5;
+    }
+    #content {
+      min-height: 300px; padding: 14px 18px;
+      border: 1px solid #e5e7eb; border-radius: 8px;
+      background: #fffdf7; line-height: 1.85; font-size: 14px;
+      white-space: pre-wrap;
+    }
+    .stat { font-size: 12px; color: #6b7280; }
+    .err { color: #dc2626; }
+    .ok  { color: #16a34a; }
+    .novel-banner {
+      background: #eff6ff; border: 1px solid #bfdbfe;
+      padding: 8px 12px; border-radius: 6px; font-size: 13px;
+      color: #1e40af; margin-top: 6px; display: none;
+    }
+    .novel-banner.visible { display: block; }
+  </style>
+</head>
+<body>
+  <h1>AI Novel Platform · Demo</h1>
+  <div class="sub">登录 → 新建小说 → 设定主题 → 生成章节。后端: <code id="originLabel">http://localhost:3000</code></div>
+
+  <!-- ① Login / Register -->
+  <div class="card">
+    <h2>① 登录 / 注册</h2>
+    <div class="row">
+      <label>用户名</label>
+      <input id="username" value="demo_user">
+      <input id="email" value="demo@example.com" placeholder="email (注册时用)">
+    </div>
+    <div class="row">
+      <label>密码</label>
+      <input id="password" type="password" value="demo12345">
+      <button onclick="register()">注册</button>
+      <button onclick="login()">登录</button>
+      <span id="authStatus" class="stat"></span>
+    </div>
+  </div>
+
+  <!-- ② Create Novel -->
+  <div class="card">
+    <h2>② 新建小说</h2>
+    <div class="row">
+      <label>标题</label>
+      <input id="novelTitle" placeholder="例如:重生之废柴男主觉醒系统">
+    </div>
+    <div class="row" style="align-items: flex-start;">
+      <label>简介</label>
+      <textarea id="novelSynopsis" rows="2" placeholder="一句话概括这本书的核心卖点"></textarea>
+    </div>
+    <div class="row">
+      <label>类型</label>
+      <input id="novelGenres" placeholder="逗号分隔,如:玄幻、修仙、爽文">
+    </div>
+    <div class="row">
+      <label>目标字数</label>
+      <input id="novelTarget" type="number" value="200000" style="max-width:160px;">
+      <button onclick="createNovel()" id="createNovelBtn" disabled>新建</button>
+      <span id="novelStatus" class="stat"></span>
+    </div>
+    <div id="novelBanner" class="novel-banner"></div>
+  </div>
+
+  <!-- ③ Themes + Polish -->
+  <div class="card">
+    <h2>③ 主题(用户自定义) · AI 润色</h2>
+    <div class="row">
+      <label>主题名</label>
+      <input id="themeName" placeholder="例如:末世废土 / 宫斗权谋">
+    </div>
+    <div class="row">
+      <label>标签</label>
+      <input id="themeTags" placeholder="逗号或顿号分隔,如:丧尸、末日生存、硬科幻">
+    </div>
+    <div class="row" style="align-items: flex-start;">
+      <label>主题描述</label>
+      <textarea id="themeDesc" rows="3" placeholder="多行描述,这是 AI 会去润色的字段"></textarea>
+    </div>
+    <div class="row">
+      <button onclick="createTheme()" id="themeCreateBtn" disabled>保存主题</button>
+      <button onclick="polishTheme(false)" id="polishBtn" class="ghost" disabled>AI 润色(预览)</button>
+      <button onclick="polishTheme(true)" id="polishSaveBtn" disabled>润色并保存</button>
+      <span id="themeStatus" class="stat"></span>
+    </div>
+    <div id="polishPanel" style="display:none; margin-top: 12px;">
+      <div class="stat" style="margin-bottom: 4px;">润色结果</div>
+      <div id="polishedOut" style="background:#ecfdf5; padding:10px; border-radius:6px; white-space:pre-wrap; font-size:13px; line-height:1.7;"></div>
+      <div class="stat" style="margin-top:6px;" id="polishNotes"></div>
+    </div>
+  </div>
+
+  <!-- ④ Chapter -->
+  <div class="card">
+    <h2>④ 章节(创建 + 流式生成)</h2>
+    <div class="row">
+      <label>章节标题</label>
+      <input id="chapterTitle" placeholder="例如:第一章 觉醒">
+    </div>
+    <div class="row" style="align-items: flex-start;">
+      <label>章节大纲</label>
+      <textarea id="chapterOutline" rows="3" placeholder="本章要发生什么;主角做了什么;结尾的钩子"></textarea>
+    </div>
+    <div class="row">
+      <button onclick="createChapter()" id="createChapterBtn" disabled>保存章节</button>
+      <button onclick="generate()" id="genBtn" disabled>开始生成(WebSocket)</button>
+      <button onclick="cancel()" id="cancelBtn" class="danger" disabled>中断</button>
+      <span id="phasePills"></span>
+      <span id="genStat" class="stat"></span>
+    </div>
+    <div id="content" style="margin-top: 12px;">章节内容会在这里逐字出现...</div>
+  </div>
+
+  <!-- Log -->
+  <div class="card">
+    <h2>调试日志</h2>
+    <div id="log"></div>
+  </div>
+
+<script>
+const ORIGIN = (location.protocol === 'http:' || location.protocol === 'https:')
+  ? location.origin
+  : 'http://localhost:3000';
+document.getElementById('originLabel').textContent = ORIGIN;
+const API = ORIGIN + '/api';
+const WS  = ORIGIN;
+
+let token = null;
+let novelId = null;
+let chapterId = null;
+let themeId = null;
+let socket = null;
+
+function log(msg, cls='') {
+  const el = document.getElementById('log');
+  const time = new Date().toLocaleTimeString();
+  const line = document.createElement('div');
+  if (cls) line.className = cls;
+  line.textContent = `[${time}] ${msg}`;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+
+async function api(path, method='GET', body=null) {
+  const res = await fetch(API + path, {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: body ? JSON.stringify(body) : null,
+  });
+  const json = await res.json();
+  if (!res.ok || json.success === false) {
+    throw new Error(typeof json.error === 'string' ? json.error : JSON.stringify(json.error ?? json));
+  }
+  return json.data;
+}
+
+// ---------- ① auth ----------
+
+function unlockAfterAuth() {
+  document.getElementById('createNovelBtn').disabled = false;
+}
+
+async function register() {
+  try {
+    const data = await api('/auth/register', 'POST', {
+      username: username.value,
+      email: email.value,
+      password: password.value,
+    });
+    token = data.accessToken;
+    document.getElementById('authStatus').innerHTML = `<span class="ok">✓ 注册成功 user=${data.user.username}</span>`;
+    unlockAfterAuth();
+    log('register ok', 'ok');
+  } catch (e) {
+    log('register failed: ' + e.message, 'err');
+    document.getElementById('authStatus').innerHTML = `<span class="err">✗ ${e.message}</span>`;
+  }
+}
+
+async function login() {
+  try {
+    const data = await api('/auth/login', 'POST', {
+      username: username.value,
+      password: password.value,
+    });
+    token = data.accessToken;
+    document.getElementById('authStatus').innerHTML = `<span class="ok">✓ 登录成功</span>`;
+    unlockAfterAuth();
+    log('login ok', 'ok');
+  } catch (e) {
+    log('login failed: ' + e.message, 'err');
+    document.getElementById('authStatus').innerHTML = `<span class="err">✗ ${e.message}</span>`;
+  }
+}
+
+// ---------- ② novel ----------
+
+async function createNovel() {
+  const title = (novelTitle.value || '').trim();
+  if (!title) {
+    document.getElementById('novelStatus').innerHTML = `<span class="err">请填写标题</span>`;
+    return;
+  }
+  try {
+    document.getElementById('novelStatus').textContent = '创建中...';
+    const genres = novelGenres.value.split(/[,，、]/).map(s => s.trim()).filter(Boolean);
+    const novel = await api('/novels', 'POST', {
+      title,
+      synopsis: novelSynopsis.value || undefined,
+      genres: genres.length ? genres : undefined,
+      targetWordCount: parseInt(novelTarget.value, 10) || 100000,
+    });
+    novelId = novel.id;
+    log('novel created ' + novelId, 'ok');
+
+    document.getElementById('novelStatus').innerHTML = `<span class="ok">✓ 已创建</span>`;
+    const banner = document.getElementById('novelBanner');
+    banner.classList.add('visible');
+    banner.innerHTML = `当前小说:<strong>${novel.title}</strong> · id=<code>${novelId.slice(0,8)}...</code> · 状态=${novel.status}`;
+
+    // 解锁后续步骤
+    document.getElementById('themeCreateBtn').disabled = false;
+    document.getElementById('createChapterBtn').disabled = false;
+  } catch (e) {
+    document.getElementById('novelStatus').innerHTML = `<span class="err">✗ ${e.message}</span>`;
+    log('createNovel failed: ' + e.message, 'err');
+  }
+}
+
+// ---------- ③ theme ----------
+
+async function createTheme() {
+  if (!novelId) { alert('请先在 ② 新建小说'); return; }
+  document.getElementById('themeStatus').textContent = '保存中...';
+  try {
+    const tags = themeTags.value.split(/[,，、]/).map(s => s.trim()).filter(Boolean);
+    const t = await api(`/novels/${novelId}/themes`, 'POST', {
+      name: themeName.value,
+      description: themeDesc.value,
+      tags,
+      priority: 7,
+    });
+    themeId = t.id;
+    document.getElementById('themeStatus').innerHTML = `<span class="ok">✓ theme=${themeId.slice(0,8)}...</span>`;
+    document.getElementById('polishBtn').disabled = false;
+    document.getElementById('polishSaveBtn').disabled = false;
+    log('theme created ' + themeId, 'ok');
+  } catch (e) {
+    document.getElementById('themeStatus').innerHTML = `<span class="err">✗ ${e.message}</span>`;
+    log('createTheme failed: ' + e.message, 'err');
+  }
+}
+
+async function polishTheme(save) {
+  if (!themeId) return;
+  const btn = save ? 'polishSaveBtn' : 'polishBtn';
+  document.getElementById(btn).disabled = true;
+  document.getElementById('themeStatus').textContent = save ? '润色并保存中...' : '润色中...';
+  try {
+    const res = await api(`/novels/${novelId}/themes/${themeId}/polish`, 'POST', { save });
+    document.getElementById('polishPanel').style.display = 'block';
+    document.getElementById('polishedOut').textContent = res.polished;
+    document.getElementById('polishNotes').textContent = res.notes ? '编辑笔记: ' + res.notes : '';
+    document.getElementById('themeStatus').innerHTML =
+      `<span class="ok">✓ ${save ? '已保存(可调用 /revert 回滚)' : '预览(未保存)'}</span>`;
+    if (save && res.theme) {
+      themeDesc.value = res.theme.description;
+      log('theme polished + saved', 'ok');
+    } else {
+      log('theme polished (preview)', 'ok');
+    }
+  } catch (e) {
+    document.getElementById('themeStatus').innerHTML = `<span class="err">✗ ${e.message}</span>`;
+    log('polish failed: ' + e.message, 'err');
+  } finally {
+    document.getElementById(btn).disabled = false;
+  }
+}
+
+// ---------- ④ chapter ----------
+
+async function createChapter() {
+  if (!novelId) { alert('请先在 ② 新建小说'); return; }
+  try {
+    document.getElementById('genStat').textContent = '保存中...';
+    const ch = await api(`/novels/${novelId}/chapters`, 'POST', {
+      title: chapterTitle.value || '未命名章节',
+      outline: chapterOutline.value || undefined,
+    });
+    chapterId = ch.id;
+    document.getElementById('genStat').innerHTML = `<span class="ok">✓ 章节已保存 #${ch.chapterNumber}</span>`;
+    document.getElementById('genBtn').disabled = false;
+    log('chapter created ' + chapterId, 'ok');
+  } catch (e) {
+    document.getElementById('genStat').innerHTML = `<span class="err">✗ ${e.message}</span>`;
+    log('createChapter failed: ' + e.message, 'err');
+  }
+}
+
+function setPhase(phase) {
+  const phases = ['compress', 'plan', 'generate', 'continuity', 'persist'];
+  const idx = phases.indexOf(phase);
+  document.getElementById('phasePills').innerHTML = phases.map((p, i) => {
+    const cls = i < idx ? 'done' : i === idx ? 'active' : '';
+    return `<span class="pill ${cls}">${p}</span>`;
+  }).join('');
+}
+
+function generate() {
+  if (!chapterId) { alert('请先点 "保存章节"'); return; }
+  document.getElementById('content').textContent = '';
+  document.getElementById('genStat').textContent = '';
+  document.getElementById('genBtn').disabled = true;
+  document.getElementById('cancelBtn').disabled = false;
+
+  socket = io(WS + '/ws', { auth: { token }, transports: ['websocket'] });
+
+  socket.on('connect', () => {
+    log('ws connected', 'ok');
+    socket.emit('chapter:generate', { novelId, chapterId });
+  });
+  socket.on('chapter:start', () => log('chapter:start'));
+  socket.on('chapter:phase', (e) => { log('phase=' + e.phase); setPhase(e.phase); });
+  socket.on('chapter:token', (e) => {
+    const el = document.getElementById('content');
+    el.textContent += e.value;
+    el.scrollTop = el.scrollHeight;
+  });
+  socket.on('chapter:continuity', (e) => {
+    const issues = e.issues || [];
+    log(`continuity: ${issues.length} issues`);
+    if (issues.length) {
+      const warn = issues.map(i => `[${i.severity}] ${i.message}`).join('\n');
+      log(warn, issues.some(i => i.severity === 'error') ? 'err' : '');
+    }
+  });
+  socket.on('chapter:done', (e) => {
+    log(`done · ${e.content.length} chars`, 'ok');
+    document.getElementById('genStat').innerHTML = `<span class="ok">✓ 完成 · ${e.content.length} 字</span>`;
+    document.getElementById('genBtn').disabled = false;
+    document.getElementById('cancelBtn').disabled = true;
+    socket.disconnect();
+  });
+  socket.on('chapter:error', (e) => {
+    log('error: ' + e.message, 'err');
+    document.getElementById('genStat').innerHTML = `<span class="err">✗ ${e.message}</span>`;
+    document.getElementById('genBtn').disabled = false;
+    document.getElementById('cancelBtn').disabled = true;
+  });
+  socket.on('disconnect', () => log('ws disconnected'));
+}
+
+function cancel() {
+  if (socket) {
+    socket.emit('chapter:cancel');
+    log('sent cancel');
+  }
+}
+</script>
+</body>
+</html>

@@ -43,7 +43,12 @@ export class ContentGeneratorAgent {
       extraInstructions: input.extraInstructions ?? '',
     });
 
-    for await (const tok of this.llm.stream(tpl.systemPrompt, user, { temperature: 0.85 })) {
+    // 透传 signal:LlmService 内部会用它去 abort 真正的上游 HTTP 请求,
+    // 而不只是停止前端迭代 —— 否则 LLM 在云端继续烧 token。
+    for await (const tok of this.llm.stream(tpl.systemPrompt, user, {
+      temperature: 0.85,
+      signal: input.signal,
+    })) {
       if (input.signal?.aborted) {
         this.logger.warn('content stream aborted by caller');
         return;

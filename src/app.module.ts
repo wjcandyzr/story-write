@@ -13,6 +13,7 @@ import { CharacterModule } from './modules/character/character.module';
 import { PromptTemplateModule } from './modules/prompt-template/prompt-template.module';
 import { NovelModule } from './modules/novel/novel.module';
 import { ChapterModule } from './modules/chapter/chapter.module';
+import { ThemeModule } from './modules/theme/theme.module';
 import { AgentsModule } from './modules/agents/agents.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
@@ -31,6 +32,7 @@ import { RolesGuard } from './common/guards/roles.guard';
     PromptTemplateModule,
     NovelModule,
     ChapterModule,
+    ThemeModule,
     AgentsModule,
   ],
   providers: [

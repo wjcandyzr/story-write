@@ -10,6 +10,10 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
   }
 
   canActivate(ctx: ExecutionContext) {
+    // WebSocket / RPC 上下文里没有 HTTP request,passport-jwt 取 header 会失败。
+    // 网关在 handleConnection 里独立校验 JWT,这里直接放行,避免事件被静默丢弃。
+    if (ctx.getType() !== 'http') return true;
+
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
       ctx.getHandler(),
       ctx.getClass(),

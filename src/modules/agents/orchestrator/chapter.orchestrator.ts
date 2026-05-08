@@ -134,6 +134,91 @@ export class ChapterOrchestrator {
   }
 
   /**
+   * 给"新建章节"对话框打开时自动起一个标题用。
+   * 用户已经填了大纲/想法时(outlineHint, extraHints),标题精准切中;
+   * 否则基于上一章结尾推测本章核心事件。
+   */
+  async draftTitle(input: {
+    novelId: string;
+    ownerId: string;
+    outlineHint?: string;
+    extraHints?: string;
+  }): Promise<{ title: string; chapterNumber: number }> {
+    const novel = await this.novels.getOwned(input.novelId, input.ownerId);
+    const [bible, characters, list] = await Promise.all([
+      this.bible.findAllForNovel(input.novelId),
+      this.characters.findAllForNovel(input.novelId),
+      this.chapters.list(input.ownerId, input.novelId, { page: 1, pageSize: 200 }),
+    ]);
+
+    const allChapters = list.items;
+    const nextChapterNumber =
+      allChapters.reduce((m, c) => Math.max(m, c.chapterNumber), 0) + 1;
+    const previousChapter =
+      allChapters.find((c) => c.chapterNumber === nextChapterNumber - 1) ?? null;
+
+    const res = await this.planner.draftTitle({
+      novel,
+      chapterNumber: nextChapterNumber,
+      bible,
+      characters,
+      previousChapter,
+      ownerId: input.ownerId,
+      outlineHint: input.outlineHint,
+      extraHints: input.extraHints,
+    });
+    return { ...res, chapterNumber: nextChapterNumber };
+  }
+
+  /**
+   * Lightweight outline drafting for the create-chapter UX. The chapter
+   * doesn't exist yet — caller passes the title the user just typed.
+   * Pulls themes/world-bible/characters and a *cheap* digest of the last
+   * 1~3 chapters (title + outline only — no LLM compression).
+   */
+  async draftOutline(input: {
+    novelId: string;
+    ownerId: string;
+    title: string;
+    hints?: string;
+  }): Promise<{ outline: string; themesUsed: string[]; chapterNumber: number }> {
+    const novel = await this.novels.getOwned(input.novelId, input.ownerId);
+    const [bible, characters, list] = await Promise.all([
+      this.bible.findAllForNovel(input.novelId),
+      this.characters.findAllForNovel(input.novelId),
+      this.chapters.list(input.ownerId, input.novelId, { page: 1, pageSize: 200 }),
+    ]);
+
+    const allChapters = list.items;
+    const nextChapterNumber =
+      allChapters.reduce((m, c) => Math.max(m, c.chapterNumber), 0) + 1;
+
+    const previousDigest =
+      allChapters
+        .slice(-3)
+        .map(
+          (c) =>
+            `第 ${c.chapterNumber} 章《${c.title}》: ${
+              c.outline?.slice(0, 200) ?? c.content?.slice(0, 200) ?? '(空)'
+            }`,
+        )
+        .join('\n') || '';
+
+    const res = await this.planner.draftOutline({
+      novel,
+      title: input.title,
+      chapterNumber: nextChapterNumber,
+      bible,
+      characters,
+      previousDigest,
+      hints: input.hints,
+      ownerId: input.ownerId,
+    });
+
+    return { ...res, chapterNumber: nextChapterNumber };
+  }
+
+  /**
    * Non-streaming, fully checkpointed run via LangGraph. Use this for
    * resumable / replayable jobs (e.g. retried by a worker).
    */

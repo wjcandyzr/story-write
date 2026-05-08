@@ -3,8 +3,12 @@ import { Reflector } from '@nestjs/core';
 import { RolesGuard } from './roles.guard';
 import { UserRole } from '../../modules/user/domain/user-role.enum';
 
-function mkCtx(user: { roles?: string[] } | null = null): ExecutionContext {
+function mkCtx(
+  user: { roles?: string[] } | null = null,
+  type: 'http' | 'ws' | 'rpc' = 'http',
+): ExecutionContext {
   return {
+    getType: () => type,
     getHandler: () => null,
     getClass: () => null,
     switchToHttp: () => ({ getRequest: () => ({ user }) }),
@@ -38,5 +42,11 @@ describe('RolesGuard', () => {
   it('passes when user has at least one required role', () => {
     jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue([UserRole.AUTHOR, UserRole.ADMIN]);
     expect(guard.canActivate(mkCtx({ roles: [UserRole.AUTHOR] }))).toBe(true);
+  });
+
+  it('skips non-HTTP contexts (websocket / rpc) — gateways do their own auth', () => {
+    jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue([UserRole.ADMIN]);
+    expect(guard.canActivate(mkCtx(null, 'ws'))).toBe(true);
+    expect(guard.canActivate(mkCtx(null, 'rpc'))).toBe(true);
   });
 });

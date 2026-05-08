@@ -13,6 +13,7 @@ export enum PromptScope {
   CONTENT_GENERATOR = 'content_generator',
   CONTEXT_COMPRESSOR = 'context_compressor',
   CONTINUITY_CHECKER = 'continuity_checker',
+  POLISH = 'polish',
   GENERIC = 'generic',
 }
 

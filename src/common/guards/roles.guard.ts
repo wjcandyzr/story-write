@@ -8,6 +8,10 @@ export class RolesGuard implements CanActivate {
   constructor(private readonly reflector: Reflector) {}
 
   canActivate(ctx: ExecutionContext): boolean {
+    // 与 JwtAuthGuard 一致:非 HTTP 上下文(WebSocket / RPC)放行,
+    // switchToHttp().getRequest() 在 ws 上是 undefined,会直接炸。
+    if (ctx.getType() !== 'http') return true;
+
     const required = this.reflector.getAllAndOverride<UserRole[]>(ROLES_KEY, [
       ctx.getHandler(),
       ctx.getClass(),

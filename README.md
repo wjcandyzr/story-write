@@ -2,7 +2,16 @@
 
 NestJS + LangGraph + PostgreSQL + Redis 长篇小说生成平台。
 
-## 架构
+## 仓库结构
+
+```
+.
+├── src/                              # NestJS 后端
+├── demo/                             # 旧的单文件 HTML demo(可保留作冒烟测试)
+└── web/                              # Vue 3 + TS + Element Plus 前端
+```
+
+## 后端架构
 
 ```
 src/
@@ -32,19 +41,35 @@ src/
 
 ## 快速开始
 
+### 后端
+
 ```bash
 cp .env.example .env
 # 填入 OPENAI_API_KEY 等
-docker compose up --build
+docker compose up -d postgres redis     # 起 PG / Redis
+npm install
+npm run start:dev                        # 起 nest @ :3000
 ```
 
-服务起来之后:
+### 前端
+
+```bash
+cd web
+npm install
+npm run dev                              # vite @ :4000,带 /api 与 /ws 代理
+```
+
+打开 **http://localhost:4000/** 进入 Vue 应用。
+
+服务清单:
 
 | 入口 | 地址 |
 | --- | --- |
+| Vue 前端 (开发) | http://localhost:4000/ |
 | REST API | http://localhost:3000/api |
 | Swagger 文档 | http://localhost:3000/docs |
-| WebSocket (Socket.IO) | ws://localhost:3000/ws |
+| WebSocket | ws://localhost:3000/ws |
+| 旧版 demo HTML | http://localhost:3000/(由 nest 静态托管) |
 
 > 首次部署时 `docker-compose.yml` 默认 `DB_SYNC=true`,生产环境请改为 `false` 并使用 `npm run migration:run`。
 
