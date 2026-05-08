@@ -54,7 +54,7 @@ export class ChapterEntity {
   continuityIssues!: { severity: string; message: string; suggestion?: string }[] | null;
 
   /** Last LangGraph thread id used for resumable runs. */
-  @Column({ name: 'thread_id', nullable: true })
+  @Column({ name: 'thread_id', type: 'varchar', length: 64, nullable: true })
   threadId!: string | null;
 
   @CreateDateColumn({ name: 'created_at' }) createdAt!: Date;

@@ -176,7 +176,7 @@ export class ChapterOrchestrator {
         });
         return { contextSummary: summary };
       })
-      .addNode('plan', async (s: GraphState) => {
+      .addNode('planner', async (s: GraphState) => {
         const ctx = await this.loadContext({
           novelId: s.novelId,
           chapterId: s.chapterId,
@@ -240,8 +240,8 @@ export class ChapterOrchestrator {
         return {};
       })
       .addEdge(START, 'compress')
-      .addEdge('compress', 'plan')
-      .addEdge('plan', 'generate')
+      .addEdge('compress', 'planner')
+      .addEdge('planner', 'generate')
       .addEdge('generate', 'continuity')
       .addEdge('continuity', 'persist')
       .addEdge('persist', END);
