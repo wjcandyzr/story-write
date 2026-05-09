@@ -1,0 +1,99 @@
+# ====================================================================
+# 生产部署 — 一台服务器跑全套
+#   $ docker compose -f docker-compose.prod.yml up -d --build
+#
+# 与 docker-compose.yml 的区别:
+#   - postgres / redis 不映射到宿主机端口,只在 docker 内网访问(更安全)
+#   - 加了 web 服务(nginx + 前端 dist),对外暴露 80 端口
+#   - DB_SYNC 默认 true(首次部署便利);稳定后改 false 走 migrations
+#   - 所有秘密都通过 .env 注入,不写死在 yml 里
+# ====================================================================
+
+name: novel
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: novel-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ai_novel
+      POSTGRES_USER: novel
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U novel -d ai_novel"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: novel-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: novel-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: novel
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ai_novel
+      # 首次部署 true 自动建表;稳定后改 false 走 migration:run
+      DB_SYNC: ${DB_SYNC:-true}
+
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in .env}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY must be set in .env}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.deepseek.com}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
+      LLM_TEMPERATURE: ${LLM_TEMPERATURE:-0.8}
+      LLM_TIMEOUT_MS: ${LLM_TIMEOUT_MS:-180000}
+      LLM_STREAM_STALL_MS: ${LLM_STREAM_STALL_MS:-45000}
+      LLM_THINKING: ${LLM_THINKING:-disabled}
+      LLM_REASONING_EFFORT: ${LLM_REASONING_EFFORT:-}
+      LLM_FAKE_STREAM: ${LLM_FAKE_STREAM:-true}
+      LLM_MAX_REWRITES: ${LLM_MAX_REWRITES:-3}
+
+      CHECKPOINT_PG_URL: postgres://novel:${DB_PASSWORD}@postgres:5432/ai_novel
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    container_name: novel-web
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "${PUBLIC_HTTP_PORT:-80}:80"
+
+volumes:
+  pgdata:
+  redisdata:
