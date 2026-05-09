@@ -3,7 +3,7 @@ import { io, type Socket } from 'socket.io-client';
 import { useAuthStore } from '@/stores/auth';
 import type { ContinuityIssue } from '@/types/api';
 
-export type ChapterPhase = 'compress' | 'plan' | 'generate' | 'continuity' | 'persist';
+export type ChapterPhase = 'compress' | 'plan' | 'generate' | 'continuity' | 'rewrite' | 'persist';
 
 /**
  * Reactive wrapper around the `/ws` Socket.IO namespace's chapter:* events.
@@ -16,6 +16,8 @@ export function useChapterSocket() {
   const generating = ref(false);
   const phase = ref<ChapterPhase | null>(null);
   const content = ref('');
+  /** 模型思考链,与 content 分开累加。仅在思考模式启用时才会出现内容。 */
+  const reasoning = ref('');
   const issues = ref<ContinuityIssue[]>([]);
   const errorMsg = ref<string | null>(null);
 
@@ -24,6 +26,7 @@ export function useChapterSocket() {
   function reset() {
     phase.value = null;
     content.value = '';
+    reasoning.value = '';
     issues.value = [];
     errorMsg.value = null;
   }
@@ -51,6 +54,10 @@ export function useChapterSocket() {
 
     socket.on('chapter:phase', (e: { phase: ChapterPhase }) => { phase.value = e.phase; });
     socket.on('chapter:token', (e: { value: string }) => { content.value += e.value; });
+    socket.on('chapter:reasoning', (e: { value: string }) => { reasoning.value += e.value; });
+    // 后端连续性自动修订完成后,会发 chapter:replace 让前端整段替换
+    // (而不是 token 累加)。重写后的全文 = e.value
+    socket.on('chapter:replace', (e: { value: string }) => { content.value = e.value; });
     socket.on('chapter:continuity', (e: { issues: ContinuityIssue[] }) => {
       issues.value = e.issues ?? [];
     });
@@ -77,5 +84,5 @@ export function useChapterSocket() {
     socket?.disconnect();
   });
 
-  return { connected, generating, phase, content, issues, errorMsg, start, cancel };
+  return { connected, generating, phase, content, reasoning, issues, errorMsg, start, cancel };
 }

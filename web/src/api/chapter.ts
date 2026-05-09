@@ -1,11 +1,17 @@
 import { http } from './client';
-import type { Chapter, Paginated } from '@/types/api';
+import type { Chapter, ChapterStatus, ChapterVersion, Paginated } from '@/types/api';
 
 export interface CreateChapterDto {
   title: string;
   outline?: string;
   chapterNumber?: number;
 }
+
+/** PATCH /chapters/:id 接受 CreateChapterDto 全部字段 + status 切换。 */
+export type UpdateChapterDto = Partial<CreateChapterDto> & {
+  status?: ChapterStatus;
+  content?: string;
+};
 
 export const chapterApi = {
   create: (novelId: string, body: CreateChapterDto) =>
@@ -19,7 +25,7 @@ export const chapterApi = {
   detail: (novelId: string, id: string) =>
     http.get<Chapter>(`/novels/${novelId}/chapters/${id}`).then((r) => r.data),
 
-  update: (novelId: string, id: string, patch: Partial<CreateChapterDto>) =>
+  update: (novelId: string, id: string, patch: UpdateChapterDto) =>
     http.patch<Chapter>(`/novels/${novelId}/chapters/${id}`, patch).then((r) => r.data),
 
   remove: (novelId: string, id: string) =>
@@ -42,5 +48,21 @@ export const chapterApi = {
         `/novels/${novelId}/chapters/draft-title`,
         body,
       )
+      .then((r) => r.data),
+
+  // ===== version history =====
+  listVersions: (novelId: string, chapterId: string) =>
+    http
+      .get<ChapterVersion[]>(`/novels/${novelId}/chapters/${chapterId}/versions`)
+      .then((r) => r.data),
+
+  getVersion: (novelId: string, chapterId: string, versionId: string) =>
+    http
+      .get<ChapterVersion>(`/novels/${novelId}/chapters/${chapterId}/versions/${versionId}`)
+      .then((r) => r.data),
+
+  restoreVersion: (novelId: string, chapterId: string, versionId: string) =>
+    http
+      .post<Chapter>(`/novels/${novelId}/chapters/${chapterId}/versions/${versionId}/restore`)
       .then((r) => r.data),
 };

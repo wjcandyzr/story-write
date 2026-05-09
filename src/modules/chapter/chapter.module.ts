@@ -3,7 +3,9 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ChapterEntity } from './infrastructure/chapter.entity';
+import { ChapterVersionEntity } from './infrastructure/chapter-version.entity';
 import { ChapterService } from './application/chapter.service';
+import { ChapterVersionService } from './application/chapter-version.service';
 import { ChapterController } from './interfaces/chapter.controller';
 import { ChapterGateway } from './interfaces/chapter.gateway';
 import { NovelModule } from '../novel/novel.module';
@@ -11,7 +13,7 @@ import { AgentsModule } from '../agents/agents.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([ChapterEntity]),
+    TypeOrmModule.forFeature([ChapterEntity, ChapterVersionEntity]),
     NovelModule,
     forwardRef(() => AgentsModule),
     JwtModule.registerAsync({
@@ -23,8 +25,8 @@ import { AgentsModule } from '../agents/agents.module';
       }),
     }),
   ],
-  providers: [ChapterService, ChapterGateway],
+  providers: [ChapterService, ChapterVersionService, ChapterGateway],
   controllers: [ChapterController],
-  exports: [ChapterService],
+  exports: [ChapterService, ChapterVersionService],
 })
 export class ChapterModule {}

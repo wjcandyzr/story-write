@@ -1,15 +1,20 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { forwardRef, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { LessThan, Repository } from 'typeorm';
 import { ChapterEntity, ChapterStatus } from '../infrastructure/chapter.entity';
 import { NovelService } from '../../novel/application/novel.service';
 import { Paginated, PaginationDto } from '../../../common/dto/pagination.dto';
+import { ChapterVersionService } from './chapter-version.service';
 
 @Injectable()
 export class ChapterService {
   constructor(
     @InjectRepository(ChapterEntity) private readonly repo: Repository<ChapterEntity>,
     private readonly novels: NovelService,
+    // forwardRef:ChapterVersionService 也注入了 chapterRepo,跟我们同模块,
+    // 直接 inject 会构成循环。用 forwardRef 让 Nest DI 解决。
+    @Inject(forwardRef(() => ChapterVersionService))
+    private readonly versions: ChapterVersionService,
   ) {}
 
   private async assertOwnership(novelId: string, ownerId: string) {
@@ -61,6 +66,22 @@ export class ChapterService {
 
   async update(ownerId: string, novelId: string, id: string, patch: Partial<ChapterEntity>) {
     const c = await this.getOwned(ownerId, novelId, id);
+
+    // 用户手动改 content 时,把当前版本作为 manual 快照留档。
+    // 不改 content 的纯元数据更新(状态、标题等)不触发,避免快照表噪音。
+    const contentChanged =
+      typeof patch.content === 'string' && patch.content !== c.content && (c.content ?? '').length > 0;
+    if (contentChanged) {
+      await this.versions.snapshot({
+        chapterId: c.id,
+        content: c.content!,
+        contextSummary: c.contextSummary,
+        continuityIssues: c.continuityIssues,
+        reason: 'manual',
+        note: '用户编辑前自动备份',
+      });
+    }
+
     Object.assign(c, patch);
     if (patch.content !== undefined) c.wordCount = countWords(patch.content ?? '');
     return this.repo.save(c);

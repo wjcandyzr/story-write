@@ -136,11 +136,17 @@ const STATUS_LABEL: Record<string, string> = {
   align-items: flex-end;
   justify-content: space-between;
   margin-bottom: 20px;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+}
+@media (max-width: 480px) {
+  .grid { grid-template-columns: 1fr; gap: 10px; }
+  .header-row { margin-bottom: 12px; }
 }
 .novel-card {
   cursor: pointer;

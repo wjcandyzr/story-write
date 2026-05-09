@@ -20,9 +20,10 @@ function onCommand(cmd: string | number | object) {
   <header class="app-header">
     <div class="brand" @click="router.push({ name: 'novels' })">
       <span class="dot" />
-      AI Novel Platform
+      <span class="brand-text">AI Novel Platform</span>
     </div>
     <div class="spacer" />
+    <a class="link nav-link" @click="router.push({ name: 'workflow' })">工作流</a>
     <a href="/docs" target="_blank" class="link">Swagger</a>
     <el-dropdown v-if="auth.user" @command="onCommand">
       <span class="user">
@@ -43,8 +44,8 @@ function onCommand(cmd: string | number | object) {
 .app-header {
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 12px 24px;
+  gap: 12px;
+  padding: 10px 16px;
   background: #fff;
   border-bottom: 1px solid #e5e7eb;
 }
@@ -55,6 +56,7 @@ function onCommand(cmd: string | number | object) {
   display: flex;
   align-items: center;
   gap: 8px;
+  white-space: nowrap;
 }
 .dot {
   display: inline-block;
@@ -62,14 +64,26 @@ function onCommand(cmd: string | number | object) {
   height: 10px;
   border-radius: 999px;
   background: linear-gradient(135deg, #2563eb, #7c3aed);
+  flex-shrink: 0;
 }
 .spacer { flex: 1; }
-.link { color: #2563eb; font-size: 13px; }
+.link { color: #2563eb; font-size: 13px; cursor: pointer; }
+.nav-link:hover { text-decoration: underline; }
 .user {
   cursor: pointer;
   display: flex;
   align-items: center;
   gap: 4px;
   font-size: 14px;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 480px) {
+  .app-header { padding: 8px 12px; gap: 8px; }
+  .brand { font-size: 14px; }
+  .brand-text { display: none; }   /* 小屏只留点点 logo */
+  .link { display: none; }          /* swagger 链接小屏隐藏,可从浏览器手开 */
 }
 </style>

@@ -61,11 +61,17 @@ export interface PolishResult {
 
 export type ChapterStatus = 'planned' | 'generating' | 'draft' | 'reviewed' | 'published';
 
+export type ContinuityIssueStatus = 'active' | 'resolved' | 'new';
+
 export interface ContinuityIssue {
+  id?: string;
   severity: 'info' | 'warning' | 'error';
   message: string;
   suggestion?: string;
   characterId?: string;
+  status?: ContinuityIssueStatus;
+  appearedAt?: string;
+  resolvedAt?: string;
 }
 
 export interface Chapter {
@@ -82,4 +88,19 @@ export interface Chapter {
   threadId: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export type ChapterVersionReason = 'initial' | 'rewrite' | 'continuity_fix' | 'manual';
+
+export interface ChapterVersion {
+  id: string;
+  chapterId: string;
+  versionNumber: number;
+  content: string;
+  wordCount: number;
+  contextSummary: string | null;
+  continuityIssues: ContinuityIssue[] | null;
+  reason: ChapterVersionReason;
+  note: string | null;
+  createdAt: string;
 }

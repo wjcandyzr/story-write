@@ -116,6 +116,13 @@ export class ChapterGateway implements OnGatewayConnection, OnGatewayDisconnect 
         if (evt.type === 'token') {
           total += evt.value;
           socket.emit('chapter:token', { value: evt.value });
+        } else if (evt.type === 'reasoning') {
+          // 模型思考过程,与正文分流
+          socket.emit('chapter:reasoning', { value: evt.value });
+        } else if (evt.type === 'replace') {
+          // 重写后整段替换:重置累计字符串,前端清空 UI 并写入新值
+          total = evt.value;
+          socket.emit('chapter:replace', { value: evt.value });
         } else if (evt.type === 'phase') {
           socket.emit('chapter:phase', { phase: evt.phase, detail: evt.detail });
         } else if (evt.type === 'continuity') {

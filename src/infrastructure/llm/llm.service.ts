@@ -3,6 +3,19 @@ import { ConfigService } from '@nestjs/config';
 import OpenAI from 'openai';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 
+/** 段落切分:超长段二次切到 200 字以内,空段过滤。 */
+function chunkByParagraphs(text: string, maxLen = 200): string[] {
+  const out: string[] = [];
+  for (const para of text.split(/(\n+)/)) {
+    if (!para) continue;
+    if (para.length <= maxLen) out.push(para);
+    else {
+      for (let i = 0; i < para.length; i += maxLen) out.push(para.slice(i, i + maxLen));
+    }
+  }
+  return out;
+}
+
 export interface LlmInvokeOptions {
   temperature?: number;
   model?: string;
@@ -11,6 +24,19 @@ export interface LlmInvokeOptions {
   timeout?: number;
   /** External cancellation — passed through to the SDK as { signal }. */
   signal?: AbortSignal;
+}
+
+/**
+ * 流式调用的 chunk:既可能是正文 token,也可能是模型的"思考过程"。
+ * thinking 模型会把推理放在 delta.reasoning_content,正文在 delta.content。
+ */
+export type LlmStreamChunk =
+  | { kind: 'content'; value: string }
+  | { kind: 'reasoning'; value: string };
+
+export interface LlmCompleteResult {
+  content: string;
+  reasoning?: string;
 }
 
 /**
@@ -65,16 +91,25 @@ export class LlmService implements OnModuleInit {
     return out;
   }
 
-  /** 非流式调用 — 等价 curl + stream:false */
+  /** 非流式调用 — 等价 curl + stream:false。返回 content 字符串(reasoning 丢弃)。 */
   async complete(system: string, user: string, opts?: LlmInvokeOptions): Promise<string> {
+    const r = await this.completeFull(system, user, opts);
+    return r.content;
+  }
+
+  /**
+   * 同 complete(),但同时带回 reasoning_content(若模型支持思考模式)。
+   * fakeStream() 用它来在非流式路径上也能把思考过程展示给用户。
+   */
+  async completeFull(
+    system: string,
+    user: string,
+    opts?: LlmInvokeOptions,
+  ): Promise<LlmCompleteResult> {
     const messages: ChatCompletionMessageParam[] = [
       { role: 'system', content: system },
       { role: 'user', content: user },
     ];
-    // SDK 的 create() 是个泛型重载:stream:false 返回 ChatCompletion,stream:true 返回
-    // Stream<ChatCompletionChunk>。两边的字段(choices[].message vs choices[].delta)
-    // 完全不同,TS 必须看到 stream 字面量才能正确收敛重载。我们这里用 any 绕过去,
-    // 因为还需要塞 thinking / reasoning_effort 这些非标准字段(SDK 类型也不认)。
     const body = {
       model: opts?.model ?? this.cfg.get<string>('LLM_MODEL', 'gpt-4o-mini'),
       messages,
@@ -88,10 +123,23 @@ export class LlmService implements OnModuleInit {
       const res = (await this.client.chat.completions.create(body, {
         signal: opts?.signal,
         timeout: opts?.timeout ?? this.defaultTimeout,
-      })) as { choices: { message: { content: string | null } }[] };
+      })) as {
+        choices: {
+          message: {
+            content: string | null;
+            reasoning_content?: string | null;
+          };
+        }[];
+      };
 
-      const content = res.choices?.[0]?.message?.content;
-      return typeof content === 'string' ? content : '';
+      const msg = res.choices?.[0]?.message ?? { content: '' };
+      return {
+        content: typeof msg.content === 'string' ? msg.content : '',
+        reasoning:
+          typeof msg.reasoning_content === 'string' && msg.reasoning_content.length > 0
+            ? msg.reasoning_content
+            : undefined,
+      };
     } catch (e) {
       this.classifyAndRethrow(e, 'LLM complete');
     }
@@ -103,7 +151,11 @@ export class LlmService implements OnModuleInit {
    *  - 内置 stall 看门狗:N 毫秒没新 token 就 abort 上游
    *  - LLM_FAKE_STREAM=true 时改走非流式 + 段落分批 emit(对不支持 SSE 的模型)
    */
-  async *stream(system: string, user: string, opts?: LlmInvokeOptions): AsyncGenerator<string> {
+  async *stream(
+    system: string,
+    user: string,
+    opts?: LlmInvokeOptions,
+  ): AsyncGenerator<LlmStreamChunk> {
     if (this.cfg.get('LLM_FAKE_STREAM') === 'true') {
       yield* this.fakeStream(system, user, opts);
       return;
@@ -154,20 +206,35 @@ export class LlmService implements OnModuleInit {
       const stream = (await this.client.chat.completions.create(body, {
         signal: ctrl.signal,
         timeout: 0,
-      })) as AsyncIterable<{ choices: { delta: { content?: string | null } }[] }>;
+      })) as AsyncIterable<{
+        choices: {
+          delta: {
+            content?: string | null;
+            // 思考模式:DeepSeek / GPT-O 系列把 reasoning 放在这里。
+            reasoning_content?: string | null;
+          };
+        }[];
+      }>;
 
       this.logger.debug(`LLM stream opened after ${Date.now() - t0}ms`);
 
       for await (const chunk of stream) {
         armStall();
         chunkCount++;
-        const delta = chunk.choices?.[0]?.delta?.content;
-        if (typeof delta === 'string' && delta.length > 0) {
+        const delta = chunk.choices?.[0]?.delta;
+        if (!delta) continue;
+
+        // 思考链 token —— 早于正文出现,先 yield 出去给 UI 显示
+        if (typeof delta.reasoning_content === 'string' && delta.reasoning_content.length > 0) {
+          yield { kind: 'reasoning', value: delta.reasoning_content };
+        }
+        // 正文 token
+        if (typeof delta.content === 'string' && delta.content.length > 0) {
           if (!firstChunkLogged) {
             this.logger.log(`LLM first content chunk after ${Date.now() - t0}ms`);
             firstChunkLogged = true;
           }
-          yield delta;
+          yield { kind: 'content', value: delta.content };
         }
       }
       this.logger.debug(`LLM stream done after ${Date.now() - t0}ms, ${chunkCount} chunks`);
@@ -182,29 +249,33 @@ export class LlmService implements OnModuleInit {
   }
 
   /**
-   * 模拟流式:一次拉完整文本,按段落分批 yield 给上层。适用于不支持 SSE 的模型。
+   * 模拟流式:一次拉完整文本,按段落分批 yield 给上层。
+   * 拿到 reasoning_content 时,先把 reasoning 段落 yield 出去,再 yield 正文。
+   * 这样即使走非流式,前端也能拿到分阶段呈现的"思考过程 → 正文"序列。
    */
   private async *fakeStream(
     system: string,
     user: string,
     opts?: LlmInvokeOptions,
-  ): AsyncGenerator<string> {
+  ): AsyncGenerator<LlmStreamChunk> {
     const t0 = Date.now();
-    this.logger.log('LLM fake-stream: invoking complete()');
-    const text = await this.complete(system, user, opts);
-    this.logger.log(`LLM fake-stream: got ${text.length} chars in ${Date.now() - t0}ms`);
+    this.logger.log('LLM fake-stream: invoking completeFull()');
+    const { content, reasoning } = await this.completeFull(system, user, opts);
+    this.logger.log(
+      `LLM fake-stream: got ${content.length} chars content` +
+        (reasoning ? `, ${reasoning.length} chars reasoning` : '') +
+        ` in ${Date.now() - t0}ms`,
+    );
 
-    const chunks: string[] = [];
-    for (const para of text.split(/(\n+)/)) {
-      if (!para) continue;
-      if (para.length <= 200) chunks.push(para);
-      else {
-        for (let i = 0; i < para.length; i += 200) chunks.push(para.slice(i, i + 200));
+    if (reasoning) {
+      for (const r of chunkByParagraphs(reasoning)) {
+        if (opts?.signal?.aborted) return;
+        yield { kind: 'reasoning', value: r };
       }
     }
-    for (const c of chunks) {
+    for (const c of chunkByParagraphs(content)) {
       if (opts?.signal?.aborted) return;
-      yield c;
+      yield { kind: 'content', value: c };
     }
   }
 

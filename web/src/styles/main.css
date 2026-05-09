@@ -2,6 +2,7 @@
   --bg: #f5f7fa;
   --fg: #1f2933;
   --muted: #6b7280;
+  --mobile-bp: 768px;
 }
 
 html, body, #app {
@@ -10,6 +11,7 @@ html, body, #app {
   background: var(--bg);
   color: var(--fg);
   font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  -webkit-text-size-adjust: 100%;
 }
 
 * {
@@ -30,4 +32,65 @@ a {
   padding: 24px;
   max-width: 1200px;
   margin: 0 auto;
+}
+
+/* === 平板竖屏 (769~1024):介于 mobile 与 desktop,padding 居中 === */
+@media (min-width: 769px) and (max-width: 1024px) {
+  .page { padding: 16px; }
+  /* dialog 在大平板上 95vw 太挤,宁可 80vw 让两侧留白 */
+  .el-overlay-dialog .el-dialog {
+    width: 80vw !important;
+    max-width: 800px !important;
+  }
+}
+
+/* === Mobile: 单列 / 紧凑 padding / 全宽 dialog === */
+@media (max-width: 768px) {
+  .page {
+    padding: 12px;
+  }
+
+  /* Element Plus 的 dialog 默认 width="50%" 但我们各处写死了 540/640/780,
+     在窄屏上要把所有 dialog 强制收成 95vw,内边距也压一下。 */
+  .el-overlay-dialog .el-dialog {
+    width: 95vw !important;
+    max-width: 95vw !important;
+    margin-top: 5vh !important;
+  }
+  .el-dialog__header {
+    padding: 12px 16px !important;
+  }
+  .el-dialog__body {
+    padding: 12px 16px !important;
+    max-height: 75vh;
+    overflow-y: auto;
+  }
+  .el-dialog__footer {
+    padding: 8px 16px 16px !important;
+  }
+
+  /* 表单标签太宽时换行 */
+  .el-form-item__label {
+    line-height: 1.4 !important;
+    word-break: break-all;
+  }
+
+  /* 抽屉/弹层里的表格卡片 */
+  .el-card__body { padding: 12px !important; }
+  .el-card__header { padding: 12px !important; }
+}
+
+/* === 小屏(< 480px)进一步紧缩 === */
+@media (max-width: 480px) {
+  .page {
+    padding: 10px;
+  }
+  .el-button {
+    padding: 6px 10px !important;
+    font-size: 13px !important;
+  }
+  .el-button--small {
+    padding: 5px 8px !important;
+    font-size: 12px !important;
+  }
 }

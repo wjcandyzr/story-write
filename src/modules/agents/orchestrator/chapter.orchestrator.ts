@@ -1,10 +1,12 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Annotation, END, START, StateGraph } from '@langchain/langgraph';
 import type { BaseCheckpointSaver } from '@langchain/langgraph';
 import { v4 as uuid } from 'uuid';
 import { LANGGRAPH_CHECKPOINTER } from '../../../infrastructure/checkpoint/checkpoint.module';
 import { NovelService } from '../../novel/application/novel.service';
 import { ChapterService } from '../../chapter/application/chapter.service';
+import { ChapterVersionService } from '../../chapter/application/chapter-version.service';
 import { WorldBibleService } from '../../world-bible/application/world-bible.service';
 import { CharacterService } from '../../character/application/character.service';
 import { PlotPlannerAgent } from '../plot-planner/plot-planner.agent';
@@ -45,8 +47,10 @@ export class ChapterOrchestrator {
 
   constructor(
     @Inject(LANGGRAPH_CHECKPOINTER) private readonly checkpointer: BaseCheckpointSaver,
+    private readonly cfg: ConfigService,
     private readonly novels: NovelService,
     private readonly chapters: ChapterService,
+    private readonly versions: ChapterVersionService,
     private readonly bible: WorldBibleService,
     private readonly characters: CharacterService,
     private readonly planner: PlotPlannerAgent,
@@ -97,7 +101,7 @@ export class ChapterOrchestrator {
     // Phase 3: stream prose tokens.
     yield { type: 'phase', phase: 'generate' };
     let draft = '';
-    for await (const tok of this.generator.streamChapter({
+    for await (const chunk of this.generator.streamChapter({
       novel: ctx.novel,
       chapter: ctx.chapter,
       plan,
@@ -109,22 +113,146 @@ export class ChapterOrchestrator {
       signal,
     })) {
       if (signal?.aborted) return;
-      draft += tok;
-      yield { type: 'token', value: tok };
+      if (chunk.kind === 'reasoning') {
+        yield { type: 'reasoning', value: chunk.value };
+      } else {
+        draft += chunk.value;
+        yield { type: 'token', value: chunk.value };
+      }
     }
 
     // Phase 4: continuity check.
     yield { type: 'phase', phase: 'continuity' };
-    const issues = await this.continuity.check({
+    const rawFirst = await this.continuity.check({
       chapterContent: draft,
       bible: ctx.bible,
       characters: ctx.characters,
       contextSummary,
       ownerId: input.ownerId,
     });
+    // 给每个 issue 打上稳定 id + status='active' + 出现时间戳
+    const now = new Date().toISOString();
+    let issues: ContinuityIssue[] = rawFirst.map((i) => ({
+      ...i,
+      id: uuid(),
+      status: 'active',
+      appearedAt: now,
+    }));
     yield { type: 'continuity', payload: { issues } };
 
-    // Phase 5: persist.
+    // 拍第一份版本快照(无论后面是否会重写,这一稿都得留下来,可对比可回滚)
+    await this.versions.snapshot({
+      chapterId: input.chapterId,
+      content: draft,
+      contextSummary,
+      continuityIssues: issues,
+      reason: 'initial',
+      note: `第一稿 · ${issues.length} 个 issue`,
+    });
+
+    // Phase 4.5: 循环修订 —— 只要还有 active/new 的 actionable issue,就再让 AI
+    // 修一轮,直到 clean 或者达到 LLM_MAX_REWRITES 上限(默认 3)。
+    // 单轮收益快速递减,3 轮通常足够;每轮代价 30~60s,封顶避免拖太久。
+    // 任一轮失败立即 break,保留当前 draft 继续走 persist。
+    const MAX_REWRITES = Number(this.cfg.get('LLM_MAX_REWRITES') ?? 3);
+    let iter = 0;
+    while (iter < MAX_REWRITES && !signal?.aborted) {
+      // 仍未解决 + 非 info 级 = 这一轮要喂给 rewriteWithFixes 的 issues
+      const unresolved = issues.filter(
+        (i) => i.status !== 'resolved' && i.severity !== 'info',
+      );
+      if (unresolved.length === 0) break;
+
+      iter++;
+      this.logger.log(
+        `continuity rewrite iter ${iter}/${MAX_REWRITES} · ${unresolved.length} unresolved issues`,
+      );
+      yield {
+        type: 'phase',
+        phase: 'rewrite',
+        detail: `第 ${iter}/${MAX_REWRITES} 轮 · 修订 ${unresolved.length} 项`,
+      };
+
+      let rewritten: string;
+      try {
+        rewritten = await this.generator.rewriteWithFixes({
+          novel: ctx.novel,
+          chapter: ctx.chapter,
+          bible: ctx.bible,
+          characters: ctx.characters,
+          originalDraft: draft,
+          issues: unresolved,
+          contextSummary,
+          ownerId: input.ownerId,
+          signal,
+        });
+      } catch (e) {
+        this.logger.warn(
+          `rewrite iter ${iter} failed (${(e as Error).message}), keeping previous draft`,
+        );
+        break;
+      }
+
+      // 再校验
+      const rawNext = await this.continuity.check({
+        chapterContent: rewritten,
+        bible: ctx.bible,
+        characters: ctx.characters,
+        contextSummary,
+        ownerId: input.ownerId,
+      });
+
+      // === 状态 diff ===
+      // 同一条问题靠 message 文本 fuzzy-match;每轮都对所有"非 resolved"的
+      // issue 重新判断:
+      //   - 这轮检查里仍存在  → 保持当前 status (active 或 new 不变)
+      //   - 这轮检查里消失了 → 标 resolved
+      // rawNext 中本轮才出现的,所有历史 issue 都没见过的 message → 标 new
+      const norm = (s: string) =>
+        s.replace(/\s+/g, '').replace(/[。!?,!?,]/g, '').toLowerCase();
+      const now = new Date().toISOString();
+      const nextNormSet = new Set(rawNext.map((s) => norm(s.message)));
+      const knownMessages = new Set(issues.map((i) => norm(i.message)));
+
+      issues = issues.map((orig) => {
+        if (orig.status === 'resolved') return orig;
+        return nextNormSet.has(norm(orig.message))
+          ? orig
+          : ({ ...orig, status: 'resolved' as const, resolvedAt: now });
+      });
+      const trulyNew: ContinuityIssue[] = rawNext
+        .filter((s) => !knownMessages.has(norm(s.message)))
+        .map((s) => ({
+          ...s,
+          id: uuid(),
+          status: 'new' as const,
+          appearedAt: now,
+        }));
+      issues = [...issues, ...trulyNew];
+
+      yield { type: 'replace', value: rewritten };
+      yield { type: 'continuity', payload: { issues } };
+
+      draft = rewritten;
+
+      const resolvedNow = issues.filter((i) => i.status === 'resolved').length;
+      const stillUnresolved = issues.filter(
+        (i) => i.status !== 'resolved' && i.severity !== 'info',
+      ).length;
+      await this.versions.snapshot({
+        chapterId: input.chapterId,
+        content: rewritten,
+        contextSummary,
+        continuityIssues: issues,
+        reason: 'continuity_fix',
+        note:
+          `自动修订第 ${iter} 轮 · 输入 ${unresolved.length} 项 · ` +
+          `累计已解决 ${resolvedNow} 项 / 仍存在 ${stillUnresolved} 项 / 新增 ${trulyNew.length} 项`,
+      });
+      // while 条件下一轮自然会判断 stillUnresolved 是否 > 0,不需要在这里 break
+    }
+
+    // Phase 5: persist live chapter row.
     yield { type: 'phase', phase: 'persist' };
     await this.chapters.patchInternal(input.chapterId, {
       content: draft,

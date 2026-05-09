@@ -49,9 +49,20 @@ export class ChapterEntity {
   @Column({ type: 'enum', enum: ChapterStatus, default: ChapterStatus.PLANNED })
   status!: ChapterStatus;
 
-  /** Continuity issues detected by checker agent. */
+  /** Continuity issues detected by checker agent.  See agents/types.ts for status semantics. */
   @Column({ type: 'jsonb', nullable: true, name: 'continuity_issues' })
-  continuityIssues!: { severity: string; message: string; suggestion?: string }[] | null;
+  continuityIssues!:
+    | {
+        id?: string;
+        severity: 'info' | 'warning' | 'error';
+        message: string;
+        suggestion?: string;
+        characterId?: string;
+        status?: 'active' | 'resolved' | 'new';
+        appearedAt?: string;
+        resolvedAt?: string;
+      }[]
+    | null;
 
   /** Last LangGraph thread id used for resumable runs. */
   @Column({ name: 'thread_id', type: 'varchar', length: 64, nullable: true })

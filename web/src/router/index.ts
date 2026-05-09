@@ -24,6 +24,11 @@ const routes: RouteRecordRaw[] = [
     props: true,
   },
   {
+    path: '/workflow',
+    name: 'workflow',
+    component: () => import('@/views/WorkflowView.vue'),
+  },
+  {
     path: '/:pathMatch(.*)*',
     name: 'not-found',
     component: () => import('@/views/NotFoundView.vue'),

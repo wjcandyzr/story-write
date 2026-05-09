@@ -80,14 +80,19 @@ async function submit() {
   min-height: 100vh;
   display: grid;
   place-items: center;
+  padding: 16px;
   background: linear-gradient(135deg, #eef2ff 0%, #fef3c7 100%);
 }
 .login-card {
   width: 380px;
+  max-width: 100%;
   border-radius: 12px;
 }
 .title {
   font-size: 20px;
   font-weight: 600;
+}
+@media (max-width: 480px) {
+  .login-card :deep(.el-form-item__label) { width: 56px !important; }
 }
 </style>

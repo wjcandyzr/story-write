@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ChapterService } from '../application/chapter.service';
+import { ChapterVersionService } from '../application/chapter-version.service';
 import {
   CreateChapterDto,
   DraftOutlineDto,
@@ -32,6 +33,7 @@ export class ChapterController {
   constructor(
     private readonly svc: ChapterService,
     private readonly orchestrator: ChapterOrchestrator,
+    private readonly versions: ChapterVersionService,
   ) {}
 
   @Post()
@@ -136,5 +138,42 @@ export class ChapterController {
       threadId: dto.threadId,
       extraInstructions: dto.extraInstructions,
     });
+  }
+
+  // ===== version snapshots (history / restore) =====
+
+  /** 列出该章节所有版本快照,从新到旧。 */
+  @Get(':id/versions')
+  listVersions(
+    @CurrentUser() user: AuthUser,
+    @Param('novelId', new ParseUUIDPipe()) novelId: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ) {
+    return this.versions.listForChapter(user.id, novelId, id);
+  }
+
+  /** 拿单个版本的完整内容(用于在 UI 上预览或对比)。 */
+  @Get(':id/versions/:versionId')
+  getVersion(
+    @CurrentUser() user: AuthUser,
+    @Param('novelId', new ParseUUIDPipe()) novelId: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('versionId', new ParseUUIDPipe()) versionId: string,
+  ) {
+    return this.versions.getOne(user.id, novelId, id, versionId);
+  }
+
+  /**
+   * 把章节当前内容回滚到某个历史版本。当前内容会先被自动备份成一个
+   * `manual` 版本,所以这是无损操作。
+   */
+  @Post(':id/versions/:versionId/restore')
+  restoreVersion(
+    @CurrentUser() user: AuthUser,
+    @Param('novelId', new ParseUUIDPipe()) novelId: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('versionId', new ParseUUIDPipe()) versionId: string,
+  ) {
+    return this.versions.restore(user.id, novelId, id, versionId);
   }
 }
