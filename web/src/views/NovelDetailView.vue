@@ -59,7 +59,8 @@ const {
   start: streamStart,
   cancel: streamCancel,
 } = useChapterSocket();
-const reasoningOpen = ref(true);
+// el-collapse 的 v-model 期望 string | string[],默认展开 'r' 这条目
+const reasoningOpen = ref<string[]>(['r']);
 const currentChapter = ref<Chapter | null>(null);
 
 // === version history state ===
@@ -448,8 +449,15 @@ async function restoreVersion(v: ChapterVersion) {
 }
 
 const phasePills = computed(() => {
+  // 注意:'rewrite' 不出现在常驻 pill 列表里(条件触发),
+  // 所以 indexOf 时 streamPhase 可能是 'rewrite',不属于这 5 项。
+  // 用 string[] 视角做 indexOf 避免 TS 拒绝。
   const phases = ['compress', 'plan', 'generate', 'continuity', 'persist'] as const;
-  const idx = streamPhase.value ? phases.indexOf(streamPhase.value) : -1;
+  const idx = streamPhase.value
+    ? (phases as readonly string[]).indexOf(streamPhase.value)
+    : -1;
+  // 当 streamPhase 是 'rewrite' 时 idx 为 -1,所有 pill 显示 pending,
+  // 视觉上等价于"在 continuity 和 persist 之间停了一下",可以接受。
   return phases.map((p, i) => ({
     name: p,
     label: phaseLabel[p],
