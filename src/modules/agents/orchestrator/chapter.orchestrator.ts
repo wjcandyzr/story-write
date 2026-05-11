@@ -321,16 +321,38 @@ export class ChapterOrchestrator {
     const nextChapterNumber =
       allChapters.reduce((m, c) => Math.max(m, c.chapterNumber), 0) + 1;
 
-    const previousDigest =
-      allChapters
-        .slice(-3)
-        .map(
-          (c) =>
-            `第 ${c.chapterNumber} 章《${c.title}》: ${
-              c.outline?.slice(0, 200) ?? c.content?.slice(0, 200) ?? '(空)'
-            }`,
-        )
-        .join('\n') || '';
+    // 上一章 + 上上章的正文 *末尾* 各 ~2000 字。
+    //  - 优先 content(真实发生的剧情),fallback 才用 outline
+    //  - 取末尾而不是开头:章末的钩子 / 悬念 是接下一章最重要的信息
+    //  - 再往前的章节(第 3 往上)就只取 title + outline 简介,避免 prompt 爆
+    const sorted = [...allChapters].sort((a, b) => a.chapterNumber - b.chapterNumber);
+    const recent = sorted.slice(-2);
+    const olderSummaries = sorted.slice(0, -2).slice(-5); // 最多再带 5 章的标题/大纲
+
+    const recentDigest = recent
+      .map((c) => {
+        const body = (c.content ?? '').trim() || (c.outline ?? '').trim() || '';
+        if (!body) return `# 第 ${c.chapterNumber} 章《${c.title}》(暂无内容)`;
+        // 章末优先(钩子/悬念在这里)
+        const tail = body.length > 2000 ? '…(前略)…\n' + body.slice(-2000) : body;
+        return `# 第 ${c.chapterNumber} 章《${c.title}》\n${tail}`;
+      })
+      .join('\n\n');
+
+    const olderDigest = olderSummaries
+      .map(
+        (c) =>
+          `- 第 ${c.chapterNumber} 章《${c.title}》:` +
+          ` ${(c.outline ?? c.content ?? '').slice(0, 160).replace(/\s+/g, ' ')}`,
+      )
+      .join('\n');
+
+    const previousDigest = [
+      olderDigest ? `## 更早章节速览\n${olderDigest}` : '',
+      recentDigest ? `## 最近 ${recent.length} 章详情\n${recentDigest}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n\n');
 
     const res = await this.planner.draftOutline({
       novel,

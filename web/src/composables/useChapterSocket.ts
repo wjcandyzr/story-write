@@ -20,6 +20,13 @@ export function useChapterSocket() {
   const reasoning = ref('');
   const issues = ref<ContinuityIssue[]>([]);
   const errorMsg = ref<string | null>(null);
+  /**
+   * 当前后台在为哪一章生成。用来让 UI 与"用户选中的章节"解耦 ——
+   * 用户切到别的章节时,生成在后台继续,只有当 streamingChapterId 等于
+   * 当前选中章节 id 时才在主视图渲染流式内容。
+   * 生成结束/出错/取消时清回 null。
+   */
+  const streamingChapterId = ref<string | null>(null);
 
   let socket: Socket | null = null;
 
@@ -39,6 +46,7 @@ export function useChapterSocket() {
     }
     reset();
     generating.value = true;
+    streamingChapterId.value = opts.chapterId;
 
     // Vite dev proxy forwards /ws to nest at :3000, so same-origin works.
     socket = io(`${location.origin}/ws`, {
@@ -63,15 +71,18 @@ export function useChapterSocket() {
     });
     socket.on('chapter:done', () => {
       generating.value = false;
+      streamingChapterId.value = null;
       socket?.disconnect();
     });
     socket.on('chapter:cancelled', () => {
       generating.value = false;
+      streamingChapterId.value = null;
       socket?.disconnect();
     });
     socket.on('chapter:error', (e: { message: string }) => {
       errorMsg.value = e.message;
       generating.value = false;
+      streamingChapterId.value = null;
       socket?.disconnect();
     });
   }
@@ -84,5 +95,18 @@ export function useChapterSocket() {
     socket?.disconnect();
   });
 
-  return { connected, generating, phase, content, reasoning, issues, errorMsg, start, cancel };
+  return {
+    connected,
+    generating,
+    phase,
+    content,
+    reasoning,
+    issues,
+    errorMsg,
+    streamingChapterId,
+    start,
+    cancel,
+    /** 暴露给消费者:切章节时清掉上一章遗留的流式状态 */
+    reset,
+  };
 }

@@ -56,8 +56,10 @@ const {
   issues: streamIssues,
   errorMsg: streamError,
   generating: streamGenerating,
+  streamingChapterId,
   start: streamStart,
   cancel: streamCancel,
+  reset: streamReset,
 } = useChapterSocket();
 // el-collapse 的 v-model 期望 string | string[],默认展开 'r' 这条目
 const reasoningOpen = ref<string[]>(['r']);
@@ -260,6 +262,67 @@ function startGenerate(ch: Chapter) {
   streamStart({ novelId: props.id, chapterId: ch.id });
 }
 
+/**
+ * 切换当前章节卡片。
+ *
+ * 关键设计:**不中断**正在跑的生成。streamingChapterId 记录到底在为哪一章
+ * 生成,模板基于 streamingChapterId === currentChapter.id 来决定是否显示
+ * 流式 UI。所以切到别的章节时:
+ *   - 后台 WebSocket 继续接 token,生成不中断
+ *   - 主视图变成显示新选中章节的 DB 持久化内容
+ *   - 顶部 banner 提示"另一章正在后台生成,点击查看"
+ * 切回时:如果还在生成,继续看到实时流;如果已经生成完,看到的是 DB 内容。
+ */
+function selectChapter(ch: Chapter) {
+  if (currentChapter.value?.id === ch.id) return;
+  currentChapter.value = ch;
+}
+
+/** 后台生成中的章节标题(给 banner 用)。 */
+const streamingChapterDescription = computed(() => {
+  if (!streamingChapterId.value) return null;
+  const ch = chapters.value.find((c) => c.id === streamingChapterId.value);
+  if (!ch) return null;
+  return `第 ${ch.chapterNumber} 章《${ch.title}》`;
+});
+
+/** 当前选中章节就是正在生成的章节 → 主视图显示流式 UI */
+const isStreamingHere = computed(
+  () =>
+    streamingChapterId.value !== null &&
+    streamingChapterId.value === currentChapter.value?.id,
+);
+
+/** 后台在生成,但用户切到了别的章节 → 顶部 banner 提示一下 */
+const isStreamingElsewhere = computed(
+  () =>
+    streamingChapterId.value !== null &&
+    streamingChapterId.value !== currentChapter.value?.id,
+);
+
+/** 跳到正在生成的章节。 */
+function jumpToStreamingChapter() {
+  if (!streamingChapterId.value) return;
+  const ch = chapters.value.find((c) => c.id === streamingChapterId.value);
+  if (ch) currentChapter.value = ch;
+}
+
+/**
+ * 监听 streamingChapterId 从某值变成 null —— 后台生成结束(完成/取消/出错)。
+ * 把当前章节状态从后端刷一遍,确保 currentChapter.content 是最新的。
+ */
+watch(streamingChapterId, async (newId, oldId) => {
+  if (oldId && !newId) {
+    try {
+      const updated = await chapterApi.detail(props.id, oldId);
+      chapters.value = chapters.value.map((c) => (c.id === oldId ? updated : c));
+      if (currentChapter.value?.id === oldId) currentChapter.value = updated;
+    } catch {
+      // 非致命,刷新失败也无所谓,用户手动刷新即可
+    }
+  }
+});
+
 async function reloadCurrent() {
   if (!currentChapter.value) return;
   currentChapter.value = await chapterApi.detail(props.id, currentChapter.value.id);
@@ -338,7 +401,13 @@ async function closeEdit() {
  * 没有则回退到数据库里持久化的版本。
  */
 async function copyContent() {
-  const text = (streamContent.value || currentChapter.value?.content || '').trim();
+  // 只有当前章节正在流(或刚流完还没切走),才用 streamContent;
+  // 否则一律以数据库存的 content 为准 —— 别把别的章节的 stream 内容复制到这章
+  const text = (
+    (isStreamingHere.value && streamContent.value) ||
+    currentChapter.value?.content ||
+    ''
+  ).trim();
   if (!text) {
     ElMessage.warning('当前没有可复制的内容');
     return;
@@ -602,7 +671,7 @@ const sortedIssues = computed(() =>
               shadow="hover"
               class="chapter-card"
               :class="{ active: currentChapter?.id === ch.id }"
-              @click="currentChapter = ch"
+              @click="selectChapter(ch)"
             >
               <div class="ch-row">
                 <span class="ch-num">第 {{ ch.chapterNumber }} 章</span>
@@ -655,14 +724,42 @@ const sortedIssues = computed(() =>
               <el-empty description="选择左侧章节,或新建一章后点 “生成”" />
             </div>
             <template v-else>
+              <!-- 后台另一章在生成时的横幅提示 -->
+              <el-alert
+                v-if="isStreamingElsewhere"
+                type="info"
+                show-icon
+                :closable="false"
+                style="margin-bottom: 12px;"
+              >
+                <template #title>
+                  正在后台生成 {{ streamingChapterDescription }},不会因为你切章节而中断。
+                  <el-link
+                    type="primary"
+                    :underline="false"
+                    style="margin-left: 8px;"
+                    @click="jumpToStreamingChapter"
+                  >切回去看进度 →</el-link>
+                </template>
+              </el-alert>
+
               <div class="stream-head">
                 <h3 style="margin: 0;">
                   第 {{ currentChapter.chapterNumber }} 章 · {{ currentChapter.title }}
                 </h3>
                 <div>
-                  <el-button v-if="streamGenerating" type="danger" @click="streamCancel">中断</el-button>
-                  <el-button v-else type="primary" @click="startGenerate(currentChapter)">
-                    {{ streamContent || currentChapter.content ? '重新生成' : '开始生成' }}
+                  <el-button v-if="isStreamingHere" type="danger" @click="streamCancel">中断</el-button>
+                  <el-button
+                    v-else
+                    type="primary"
+                    :disabled="streamGenerating"
+                    @click="startGenerate(currentChapter)"
+                  >
+                    {{
+                      streamGenerating
+                        ? '等待后台生成完成…'
+                        : (currentChapter.content ? '重新生成' : '开始生成')
+                    }}
                   </el-button>
                   <el-button :icon="Clock" @click="openVersions">历史版本</el-button>
                   <el-button :icon="RefreshLeft" @click="reloadCurrent">刷新</el-button>
@@ -674,7 +771,8 @@ const sortedIssues = computed(() =>
                 <div>{{ currentChapter.outline }}</div>
               </div>
 
-              <div class="phase-row">
+              <!-- 阶段标签 / 进度条 / 思考链 / 错误 都只在 *当前选中章节* 是流式目标时显示 -->
+              <div v-if="isStreamingHere" class="phase-row">
                 <el-tag
                   v-for="p in phasePills"
                   :key="p.name"
@@ -687,11 +785,7 @@ const sortedIssues = computed(() =>
                 </el-tag>
               </div>
 
-              <!-- 总进度条:仅在生成中或有进展时显示 -->
-              <div
-                v-if="streamGenerating || streamContent || streamError"
-                class="progress-row"
-              >
+              <div v-if="isStreamingHere" class="progress-row">
                 <el-progress
                   :percentage="progressPercent"
                   :status="progressStatus"
@@ -702,8 +796,11 @@ const sortedIssues = computed(() =>
                 </div>
               </div>
 
-              <!-- 思考链折叠面板:仅在出现 reasoning 时才出现 -->
-              <el-collapse v-if="streamReasoning" v-model="reasoningOpen" class="reasoning-panel">
+              <el-collapse
+                v-if="isStreamingHere && streamReasoning"
+                v-model="reasoningOpen"
+                class="reasoning-panel"
+              >
                 <el-collapse-item name="r">
                   <template #title>
                     <span class="reasoning-title">
@@ -715,21 +812,24 @@ const sortedIssues = computed(() =>
               </el-collapse>
 
               <el-alert
-                v-if="streamError"
+                v-if="isStreamingHere && streamError"
                 type="error" :closable="false" show-icon
                 :title="streamError"
               />
 
               <!-- 正文区域顶部工具条:左边字数,右边编辑 + 一键复制 -->
-              <div class="content-toolbar" v-if="streamContent || currentChapter.content || streamGenerating">
+              <div
+                class="content-toolbar"
+                v-if="(isStreamingHere && streamContent) || currentChapter.content || isStreamingHere"
+              >
                 <span class="muted">
-                  正文 · {{ (streamContent || currentChapter.content || '').length }} 字
+                  正文 · {{ ((isStreamingHere && streamContent) || currentChapter.content || '').length }} 字
                 </span>
                 <div class="content-toolbar-actions">
                   <el-button
                     size="small"
                     :icon="EditPen"
-                    :disabled="streamGenerating || (!streamContent && !currentChapter.content)"
+                    :disabled="isStreamingHere || !currentChapter.content"
                     @click="openEditChapter"
                   >编辑</el-button>
                   <el-button
@@ -737,30 +837,30 @@ const sortedIssues = computed(() =>
                     :icon="CopyDocument"
                     type="primary"
                     plain
-                    :disabled="!streamContent && !currentChapter.content"
+                    :disabled="!((isStreamingHere && streamContent) || currentChapter.content)"
                     @click="copyContent"
                   >一键复制</el-button>
                 </div>
               </div>
 
               <div class="content-box">
-                <!-- 生成中:旧内容立刻清空,显示占位提示;有 token 来后渐显正文 -->
-                <template v-if="streamGenerating">
+                <!-- 当前章节正在流:显示 streamContent / 占位 -->
+                <template v-if="isStreamingHere">
                   <div v-if="streamContent" class="streamed">{{ streamContent }}</div>
                   <div v-else class="generating-placeholder">
                     <el-icon class="spin"><Loading /></el-icon>
                     <span>{{ phaseLabel[streamPhase ?? 'compress'] || '正在准备…' }} · 文字稍后逐段冒出</span>
                   </div>
                 </template>
-                <!-- 不在生成中:刚生成完保留 streamContent,否则回退到数据库存的版本 -->
+                <!-- 否则一律显示数据库存的内容(其他章节的流不影响这里) -->
                 <template v-else>
-                  <div v-if="streamContent" class="streamed">{{ streamContent }}</div>
-                  <div v-else-if="currentChapter.content" class="streamed">{{ currentChapter.content }}</div>
+                  <div v-if="currentChapter.content" class="streamed">{{ currentChapter.content }}</div>
                   <el-empty v-else description="正文会在这里逐字出现" :image-size="64" />
                 </template>
               </div>
 
-              <div v-if="streamIssues.length" class="issues">
+              <!-- 连续性检查 issues 也只在当前章节流时显示(否则可能是另一章的检查结果) -->
+              <div v-if="isStreamingHere && streamIssues.length" class="issues">
                 <h4>
                   连续性检查 · 共 {{ streamIssues.length }} 项
                   <span v-if="resolvedIssueCount" class="resolved-count">
